@@ -1,18 +1,30 @@
 # pylint: disable = invalid-name
 import os
 import uuid
-
 import streamlit as st
-from langchain_core.messages import HumanMessage
 
+from langchain_core.messages import HumanMessage
 from agents.agent import Agent
 
+#env vars for guardrails and tracing
+os.environ["WHYLABS_API_KEY"] = ""
+os.environ["WHYLABS_DEFAULT_DATASET_ID"] = "model-8" 
+os.environ["GUARDRAILS_ENDPOINT"] = "http://localhost:8080/"
+os.environ["GUARDRAILS_API_KEY"] = "rich"
+os.environ["TRACE_PROMPT_AND_RESPONSE"] = "true"
+
+#import libs
+import openllmtelemetry
+from openllmtelemetry import trace_task
+from opentelemetry.trace import get_current_span
+
+#instrumentation step
+openllmtelemetry.instrument(application_name="ai-travel-agent-app", service_name="ai-travel-agent-service")
 
 def populate_envs(sender_email, receiver_email, subject):
     os.environ['FROM_EMAIL'] = sender_email
     os.environ['TO_EMAIL'] = receiver_email
     os.environ['EMAIL_SUBJECT'] = subject
-
 
 def send_email(sender_email, receiver_email, subject, thread_id):
     try:
@@ -26,11 +38,9 @@ def send_email(sender_email, receiver_email, subject, thread_id):
     except Exception as e:
         st.error(f'Error sending email: {e}')
 
-
 def initialize_agent():
     if 'agent' not in st.session_state:
         st.session_state.agent = Agent()
-
 
 def render_custom_css():
     st.markdown(
@@ -69,7 +79,6 @@ def render_custom_css():
         </style>
         ''', unsafe_allow_html=True)
 
-
 def render_ui():
     st.markdown('<div class="center-container">', unsafe_allow_html=True)
     st.markdown('<div class="main-title">✈️🌍 AI Travel Agent 🏨🗺️</div>', unsafe_allow_html=True)
@@ -82,11 +91,12 @@ def render_ui():
         placeholder='Type your travel query here...',
     )
     st.markdown('</div>', unsafe_allow_html=True)
-    st.sidebar.image('images/ai-travel.png', caption='AI Travel Assistant')
+    #st.sidebar.image('/Users/Nir.Bar/Documents/demos/genai/langgraph/reflection-agent/images/ai-travel.png', caption='AI Travel Assistant')
 
     return user_input
 
-
+#trace/span decorator 
+@trace_task
 def process_query(user_input):
     if user_input:
         try:
@@ -95,6 +105,11 @@ def process_query(user_input):
 
             messages = [HumanMessage(content=user_input)]
             config = {'configurable': {'thread_id': thread_id}}
+            
+            #Inject a custom attribute into a span
+            span = get_current_span()
+            span.set_attribute("custom_session_id", thread_id)
+            span.set_attribute("human_message", messages)
 
             result = st.session_state.agent.graph.invoke({'messages': messages}, config=config)
 
@@ -107,7 +122,6 @@ def process_query(user_input):
             st.error(f'Error: {e}')
     else:
         st.error('Please enter a travel query.')
-
 
 def render_email_form():
     send_email_option = st.radio('Do you want to send this information via email?', ('No', 'Yes'))
